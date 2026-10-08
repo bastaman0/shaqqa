@@ -1,0 +1,1 @@
+# shaqqa - apartment expenses
