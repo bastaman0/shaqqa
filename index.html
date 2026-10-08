@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600&family=Readex+Pro:wght@600;700&display=swap">
 <script>
   /* ======== الإعداد ======== */
   window.SHAQQA_CONFIG = {
@@ -182,6 +182,10 @@ header.scrolled{border-bottom-color:var(--line)}
 .day{font-size:12.5px;color:var(--muted);font-weight:600;padding:14px 16px 4px;display:flex;justify-content:space-between}
 .item{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 16px;border:0;background:transparent;width:100%;text-align:right}
 .item:active{background:var(--surface-2)}
+.itemrow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.trash{border:0;background:transparent;width:44px;height:44px;margin-inline-end:6px;border-radius:12px;display:grid;place-items:center;color:var(--faint)}
+.trash:active,.trash:hover{background:var(--owe-soft);color:var(--owe)}
+.trash svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .ico{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;font-family:var(--display);font-weight:600;font-size:13px;color:#fff;flex:none}
 .item .t{font-weight:600;font-size:15px;min-width:0;overflow-wrap:anywhere;line-height:1.45}
 .item .s{font-size:12.5px;color:var(--muted);line-height:1.5;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -407,7 +411,10 @@ header.scrolled{border-bottom-color:var(--line)}
   function btn(cls,text,fn){const b=el("button","btn "+cls,text);b.type="button";b.onclick=fn;return b}
 
   if(!CFG.SUPABASE_URL||CFG.SUPABASE_URL.indexOf("PASTE")===0||CFG.SUPABASE_ANON_KEY.indexOf("PASTE")===0||!window.supabase){$("setupView").hidden=false;return}
-  const sb=window.supabase.createClient(CFG.SUPABASE_URL,CFG.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+  const timedFetch=(u,o)=>{o=o||{};if(o.signal)return fetch(u,o);const c=new AbortController();const t=setTimeout(()=>c.abort(),15000);return fetch(u,Object.assign({},o,{signal:c.signal})).finally(()=>clearTimeout(t))};
+  const sb=window.supabase.createClient(CFG.SUPABASE_URL,CFG.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true},global:{fetch:timedFetch}});
+  // short, honest error text
+  function why(err){if(!err)return"";const m=String(err.message||err);if(err.code==="42501"||/permission|policy/i.test(m))return"ما عندك صلاحية";if(/abort|fetch|network|Failed/i.test(m))return"النت ضعيف أو مقطوع";return"خطأ في السيرفر"}
 
   let session=null,me=null,myId=null;
   let purchases=[],settlements=[],votes=[];
@@ -448,7 +455,8 @@ header.scrolled{border-bottom-color:var(--line)}
     me=p?p.name:null;myId=session.user.id;
     $("loginView").hidden=true;$("appView").hidden=false;$("fabWrap").hidden=!me;
     $("meName").textContent=me||email;$("meDot").style.background=pColor(me);
-    render();await loadAll();subscribe();
+    try{const c=JSON.parse(store.get("cache")||"null");if(c&&c.who===myId){purchases=c.p||[];settlements=c.s||[];votes=c.v||[]}}catch(e){}
+    render();subscribe();await loadAll();
   }
   sb.auth.onAuthStateChange((ev,s)=>{
     const had=!!session;session=s;
@@ -470,8 +478,10 @@ header.scrolled{border-bottom-color:var(--line)}
         sb.from("settlements").select("*").order("at",{ascending:false}).limit(500),
         sb.from("votes").select("*")
       ]);
-      if(p.error||s.error||v.error){toast("ما قدرنا نحمّل البيانات. اتأكد من النت.");return}
+      const er=p.error||s.error||v.error;
+      if(er){toast("ما قدرنا نحدّث البيانات: "+why(er));return}
       purchases=p.data;settlements=s.data;votes=v.data;render();
+      try{store.set("cache",JSON.stringify({who:myId,p:purchases,s:settlements,v:votes}))}catch(e){}
     })();
     try{await loading}finally{loading=null;if(again){again=false;loadAll()}}
   }
@@ -638,7 +648,12 @@ header.scrolled{border-bottom-color:var(--line)}
       mid.appendChild(s);it.appendChild(mid);
       const a=el("div","a");a.appendChild(el("span","num",fmt(Number(p.amount)||0)));it.appendChild(a);
       it.onclick=()=>{openItem=openItem===p.id?null:p.id;confirmDel=null;render()};
-      log.appendChild(it);
+      const row=el("div","itemrow");row.appendChild(it);
+      if(!isSettled(p)&&p.created_by===myId){
+        const tb=el("button","trash");tb.type="button";tb.setAttribute("aria-label","حذف");tb.appendChild(svg("M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"));
+        tb.onclick=()=>{openItem=p.id;confirmDel=p.id;render()};row.appendChild(tb);
+      }
+      log.appendChild(row);
       if(openItem===p.id){
         const acts=el("div","item-actions");
         acts.appendChild(el("span",null,"اتسجّل "+shortFmt.format(new Date(p.created_at))+" · "));
@@ -677,7 +692,7 @@ header.scrolled{border-bottom-color:var(--line)}
     busyVote=true;render();
     const {data,error}=await sb.rpc("vote_settle",{p_total:o.total,p_items:o.count});
     busyVote=false;
-    if(error)toast("ما انحسبت. جرّب تاني.");
+    if(error)toast("ما انحسبت: "+why(error));
     else if(data==="changed")toast("في تغيير جديد في الحساب. راجعه ووافق تاني.");
     else if(data==="settled")toast("الأربعة وافقوا. الحساب رجع صفر ✓");
     else if(data==="voted")toast("انحسبت موافقتك ✓");
@@ -686,8 +701,10 @@ header.scrolled{border-bottom-color:var(--line)}
   async function unvote(){const {error}=await sb.rpc("unvote");toast(error?"ما نفع. جرّب تاني.":"انسحبت موافقتك");await loadAll()}
   async function del(id){
     const {error,count}=await sb.from("purchases").delete({count:"exact"}).eq("id",id);
-    if(error||!count)toast("ما نفع الحذف.");else{openItem=null;confirmDel=null;toast("انحذف")}
-    await loadAll();
+    if(error)toast("ما نفع الحذف: "+why(error));
+    else if(!count)toast("ما نفع الحذف. يمكن اتسوّى أو مش بتاعك.");
+    else{purchases=purchases.filter(x=>x.id!==id);openItem=null;confirmDel=null;render();toast("انحذف ✓")}
+    soon();
   }
 
   $("scOpen").onclick=()=>{scope="open";openItem=null;render()};
@@ -735,11 +752,13 @@ header.scrolled{border-bottom-color:var(--line)}
     let at=new Date();
     if(form.customWhen){const v=$("fWhen")&&$("fWhen").value;const t=v?new Date(v):null;if(t&&isFinite(t.getTime())&&t<at)at=t}
     const save=$("saveBtn");save.disabled=true;
-    const {error}=await sb.from("purchases").insert({amount:r2(amount),item:$("fItem").value.trim(),cat:form.cat,at:at.toISOString()});
-    save.disabled=false;
-    if(error){err.textContent="ما انحفظ. اتأكد من النت وجرّب تاني.";err.hidden=false;return}
+    save.textContent="جاري الحفظ…";
+    const {data,error}=await sb.from("purchases").insert({amount:r2(amount),item:$("fItem").value.trim(),cat:form.cat,at:at.toISOString()}).select().single();
+    save.disabled=false;save.textContent="حفظ";
+    if(error){err.textContent="ما انحفظ ("+why(error)+"). جرّب تاني.";err.hidden=false;return}
+    if(data&&!purchases.some(x=>x.id===data.id))purchases.unshift(data);
     lastCat=form.cat;store.set("cat",lastCat);
-    $("scrim").hidden=true;toast("انحفظ ✓");loadAll();
+    $("scrim").hidden=true;scope="open";render();toast("انحفظ ✓");soon();
   });
 
   $("meBtn").onclick=()=>{$("acctTitle").textContent=me?"حسابي · "+me:"حسابي";$("newPw").value="";$("acctErr").hidden=true;$("acctScrim").hidden=false};
